@@ -7,7 +7,10 @@ from LeapPoseDNN import LeapPoseDNN
 
 def main() -> None:
     # Initialization
-    loader = LeapDatasetLoader(folder_path='./')
+    loader = LeapDatasetLoader(
+        folder_path='./',
+        cache_path='./leap_dataset_cache.npz',
+    )
     loader.load_data() 
     loader.split_data(test_size=0.2)
     loader.print_summary()
@@ -26,6 +29,7 @@ def main() -> None:
     dnn_hist = dnn.train(X_tr, y_tr, X_val=X_val, y_val=y_val, epochs=100, balance_classes=True)
     dnn.evaluate(X_test, y_test, class_names=class_names, print_report=False)
     dnn.save("leap_pose_dnn.keras")
+    np.save("pose_classes.npy", np.array(class_names))
     
     # Plotting
     train_loss = dnn_hist.history["loss"]
