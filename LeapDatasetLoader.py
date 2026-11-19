@@ -247,7 +247,7 @@ class LeapDatasetLoader:
             pose_label = parts[skel_idx + 3]
 
             # ignore test_gesture
-            if 'train' not in split_folder:
+            if split_folder not in ('train_pose', 'test_pose'):
                 continue
 
             for xml_filename in xml_files:
