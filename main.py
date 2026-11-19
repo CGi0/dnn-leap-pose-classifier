@@ -38,8 +38,13 @@ def loso_eval(loader, model_kwargs, train_kwargs, num_classes) -> dict:
           f"min {vals.min():.3f}")
     return accs
 
+def load_hparams(path: str = CONFIG_PATH) -> tuple[dict, dict]:
+    with open(path) as f:
+        cfg = json.load(f)
+    return cfg["model_kwargs"], cfg["train_kwargs"]
 
-def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False) -> None:
+
+def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False, reuse_config: bool = False) -> None:
     # --- Load + subject-wise train / val / test ---------------------------
     loader = LeapDatasetLoader(folder_path='./', cache_path='./leap_dataset_cache.npz')
     loader.load_data()
@@ -54,10 +59,10 @@ def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False) -> Non
     if run_tuning:
         tuner = tune(X_tr, y_tr, X_val, y_val, num_classes, stage=stage)
         model_kwargs, train_kwargs = best_config(tuner)
+    elif reuse_config:
+        model_kwargs, train_kwargs = load_hparams()
     else:
         model_kwargs, train_kwargs = {}, {"balance_classes": True}
-    print(f"\nModel config : {model_kwargs}")
-    print(f"Train config : {train_kwargs}")
 
     # --- Final training, then a single look at the test set ---------------
     dnn = LeapPoseDNN(num_classes=num_classes, **model_kwargs)
@@ -102,5 +107,5 @@ def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False) -> Non
 if __name__ == "__main__":
     # First run: main(run_tuning=False) for a baseline on the subject-wise split.
     # Then main(run_tuning=True, stage=1), and later stage=2.
-    main(run_tuning=False)
+    main(run_tuning=False, reuse_config=True)
     # main(run_tuning=True, stage=1)
