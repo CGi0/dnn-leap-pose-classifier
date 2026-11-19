@@ -1,0 +1,37 @@
+{
+  "class_names": [
+    "01_palm",
+    "02_l",
+    "04_fist_moved",
+    "05_down",
+    "06_index",
+    "07_ok",
+    "08_palm_m",
+    "09_c",
+    "11_heavy",
+    "12_hang",
+    "13_two",
+    "14_three",
+    "15_four",
+    "16_five",
+    "17_palm_u",
+    "18_up"
+  ],
+  "feature_dim": 63,
+  "preprocess_version": 2,
+  "preprocess_tag": "v2|middle_mcp|right",
+  "scale": "middle_mcp",
+  "train_hand": "right",
+  "model_kwargs": {
+    "hidden_units": [
+      384,
+      288
+    ],
+    "dropout": 0.30000000000000004,
+    "learning_rate": 0.0004578332364114071
+  },
+  "train_kwargs": {
+    "batch_size": 128,
+    "balance_classes": false
+  }
+}
