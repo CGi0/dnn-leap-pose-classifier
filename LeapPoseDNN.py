@@ -1,40 +1,75 @@
 import numpy as np
 import keras
-from keras import layers
+from keras import layers, regularizers
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
+
+from leap_features import FEATURE_DIM
 
 
 class LeapPoseDNN:
     def __init__(
         self,
         num_classes: int,
-        input_dim: int = 63,
+        input_dim: int = FEATURE_DIM,
         hidden_units: tuple[int, ...] = (256, 128, 64),
         dropout: float = 0.3,
         learning_rate: float = 1e-3,
         seed: int = 42,
+        # --- extra options; defaults reproduce the original behaviour ---
+        l2: float = 0.0,
+        activation: str = "relu",
+        use_batchnorm: bool = True,
+        input_noise: float = 0.0,
+        optimizer: str = "adam",          # "adam" | "adamw"
+        weight_decay: float = 1e-4,       # only used by adamw
     ):
         self.num_classes = num_classes
         self.input_dim = input_dim
-        self.hidden_units = hidden_units
+        self.hidden_units = tuple(hidden_units)
         self.dropout = dropout
         self.learning_rate = learning_rate
         self.seed = seed
+        self.l2 = l2
+        self.activation = activation
+        self.use_batchnorm = use_batchnorm
+        self.input_noise = input_noise
+        self.optimizer_name = optimizer
+        self.weight_decay = weight_decay
 
         keras.utils.set_random_seed(seed)
         self.model: keras.Model = self._build_model()
         self.history: keras.callbacks.History | None = None
 
+    def _make_optimizer(self) -> keras.optimizers.Optimizer:
+        if self.optimizer_name == "adamw":
+            return keras.optimizers.AdamW(
+                learning_rate=self.learning_rate, weight_decay=self.weight_decay
+            )
+        if self.optimizer_name == "adam":
+            return keras.optimizers.Adam(learning_rate=self.learning_rate)
+        raise ValueError(f"unknown optimizer: {self.optimizer_name!r}")
+
     def _build_model(self) -> keras.Model:
-        # Builds and compiles the network."""
+        # Builds and compiles the network.
         inputs = keras.Input(shape=(self.input_dim,), name="hand_features")
         x = inputs
 
+        if self.input_noise > 0:
+            # Only active during training; simulates tracking jitter.
+            x = layers.GaussianNoise(self.input_noise, name="input_noise")(x)
+
+        reg = regularizers.l2(self.l2) if self.l2 > 0 else None
         for i, units in enumerate(self.hidden_units):
-            x = layers.Dense(units, use_bias=False, name=f"dense_{i}")(x)
-            x = layers.BatchNormalization(name=f"bn_{i}")(x)
-            x = layers.Activation("relu", name=f"relu_{i}")(x)
+            x = layers.Dense(
+                units,
+                use_bias=not self.use_batchnorm,
+                kernel_regularizer=reg,
+                name=f"dense_{i}",
+            )(x)
+            if self.use_batchnorm:
+                x = layers.BatchNormalization(name=f"bn_{i}")(x)
+            x = layers.Activation(self.activation, name=f"act_{i}")(x)
             x = layers.Dropout(self.dropout, name=f"drop_{i}")(x)
 
         outputs = layers.Dense(
@@ -43,7 +78,7 @@ class LeapPoseDNN:
 
         model = keras.Model(inputs, outputs, name="leap_pose_dnn")
         model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=self.learning_rate),
+            optimizer=self._make_optimizer(),
             loss="sparse_categorical_crossentropy",
             metrics=["accuracy"],
         )
@@ -65,10 +100,10 @@ class LeapPoseDNN:
         checkpoint_path: str | None = None,
         verbose: int = 1,
     ) -> keras.callbacks.History:
+        # Trains the model.
+        # If validation data is given, early stopping and learning-rate reduction
+        # monitor validation loss and the best weights are restored at the end.
 
-        # Trains the model. 
-        # If validation data is given, early stopping and learning-rate reduction monitor validation loss and the best weights are restored at the end.
-    
         has_val = X_val is not None and y_val is not None and len(X_val) > 0
         monitor = "val_loss" if has_val else "loss"
 
@@ -135,7 +170,7 @@ class LeapPoseDNN:
     ) -> dict:
         # Evaluates on a dataset. Returns loss, accuracy, confusion matrix and
         # the per-class report (precision / recall / f1) as a dict.
-        
+
         loss, acc = self.model.evaluate(X, y, verbose=0)
         y_pred = self.predict(X)
 
@@ -159,11 +194,11 @@ class LeapPoseDNN:
 
     def save(self, path: str = "leap_pose_dnn.keras") -> None:
         self.model.save(path)
-        
-"""
+
     @classmethod
     def load(cls, path: str) -> "LeapPoseDNN":
-        # Loads a saved model into a LeapPoseDNN wrapper.
+        # Loads a saved model into a LeapPoseDNN wrapper (for prediction/evaluation;
+        # architecture hyperparameters are not recovered).
         model = keras.models.load_model(path)
         obj = cls.__new__(cls)
         obj.model = model
@@ -173,6 +208,11 @@ class LeapPoseDNN:
         obj.dropout = 0.0
         obj.learning_rate = 1e-3
         obj.seed = 42
+        obj.l2 = 0.0
+        obj.activation = "relu"
+        obj.use_batchnorm = True
+        obj.input_noise = 0.0
+        obj.optimizer_name = "adam"
+        obj.weight_decay = 1e-4
         obj.history = None
         return obj
-"""
