@@ -1,7 +1,7 @@
 # dnn-leap-pose-classifier
 An online DNN hand pose Classifier for the Ultraleap Leap Motion hand tracker using Keras/TensorFlow.
 
-# **Static Gesture and Pose Detection Using Convolutional Neural Networks and Leap Motion Tracking**
+# **Static Gesture and Pose Detection Using an Artificial Neural Network and Leap Motion Tracking**
 
 ---
 
