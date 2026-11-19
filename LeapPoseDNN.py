@@ -4,7 +4,7 @@ from keras import layers, regularizers
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.utils.class_weight import compute_class_weight
 
-from leap_features import FEATURE_DIM
+from LeapDatasetFeatures import FEATURE_DIM
 
 
 class LeapPoseDNN:

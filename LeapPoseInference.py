@@ -8,10 +8,10 @@ import numpy as np
 import keras
 import leap
 
-from leap_features import FEATURE_DIM, PREPROCESS_VERSION, normalize_points
+from LeapDatasetFeatures import FEATURE_DIM, PREPROCESS_VERSION, normalize_points
 
-MODEL_PATH = "leap_pose_dnn.keras"           # <- saved by main.py
-CONFIG_PATH = "leap_pose_config.json"        # <- saved by main.py
+MODEL_PATH = "LeapPoseDNN.keras"             # <- saved by main.py
+CONFIG_PATH = "LeapPoseConfig.json"          # <- saved by main.py
 CONF_THRESHOLD = 0.80                        # re-tune after retraining on the subject-wise split
 INFER_HZ = 30
 SMOOTH_N = 7                                 # majority vote over last N predictions

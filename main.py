@@ -4,12 +4,12 @@ import matplotlib.pyplot as plt
 
 from LeapDatasetLoader import LeapDatasetLoader
 from LeapPoseDNN import LeapPoseDNN
-from leap_features import FEATURE_DIM, PREPROCESS_VERSION
-from tune_leap_pose import tune, best_config
+from LeapDatasetFeatures import FEATURE_DIM, PREPROCESS_VERSION
+from LeapPoseTuner import tune, best_config
 
 SEED = 42
-MODEL_PATH = "leap_pose_dnn.keras"
-CONFIG_PATH = "leap_pose_config.json"
+MODEL_PATH = "LeapPoseDNN.keras"
+CONFIG_PATH = "LeapPoseConfig.json"
 
 
 def loso_eval(loader, model_kwargs, train_kwargs, num_classes) -> dict:

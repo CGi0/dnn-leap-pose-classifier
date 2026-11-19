@@ -1,8 +1,6 @@
 """
 Hyperparameter tuning for LeapPoseDNN with KerasTuner.
 
-    pip install keras-tuner
-
 Stage 1: depth, per-layer widths, dropout, learning rate, batch size, class balance.
 Stage 2: adds width pattern, L2, activation, input noise, BatchNorm toggle, optimizer.
 
@@ -15,7 +13,7 @@ import keras_tuner as kt
 from sklearn.utils.class_weight import compute_class_weight
 
 from LeapPoseDNN import LeapPoseDNN
-from leap_features import FEATURE_DIM
+from LeapDatasetFeatures import FEATURE_DIM
 
 
 def sample_config(hp: kt.HyperParameters, stage: int = 2) -> tuple[dict, dict]:

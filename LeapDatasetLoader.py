@@ -5,7 +5,7 @@ import numpy as np
 from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from leap_features import (
+from LeapDatasetFeatures import (
     DEFAULT_SCALE,
     DEFAULT_TRAIN_HAND,
     FEATURE_DIM,
