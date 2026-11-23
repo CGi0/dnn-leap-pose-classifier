@@ -1,0 +1,258 @@
+"""
+Usage (device connected):
+    python LeapPoseRecorder.py --subject S21 --pose 19_thumbs_up --seconds 60
+"""
+import argparse
+import os
+import re
+import threading
+import time
+from datetime import datetime
+
+import numpy as np
+
+# One definition of finger / joint order: the loader's.
+from LeapDatasetLoader import LeapDatasetLoader
+from LeapDatasetFeatures import FEATURE_DIM
+
+FINGERS = LeapDatasetLoader.FINGERS            # Thumb, Index, Middle, Ring, Pinky
+JOINT_KEYS = ('tip', 'dip', 'pip', 'mcp')      # <-> TipPosition, dipPosition, pipPosition, mcpPosition
+STALE_S = 0.2                                  # tracking data older than this counts as "no hand"
+
+
+# Live extraction
+def _xyz(v) -> np.ndarray:
+    return np.array([v.x, v.y, v.z], dtype=np.float64)
+
+
+def extract_frame(hand, side: str) -> dict:
+    fingers = []
+    for digit in hand.digits:                              # thumb, index, middle, ring, pinky
+        meta, prox, inter, dist = digit.bones
+        tip, dip = _xyz(dist.next_joint), _xyz(dist.prev_joint)
+        pip, mcp = _xyz(inter.prev_joint), _xyz(prox.prev_joint)
+        d = tip - dip
+        n = np.linalg.norm(d)
+        fingers.append({
+            'tip': tip, 'dip': dip, 'pip': pip, 'mcp': mcp,
+            'tip_dir': d / n if n > 0 else np.zeros(3),
+            'tip_len': float(sum(np.linalg.norm(_xyz(b.next_joint) - _xyz(b.prev_joint))
+                                 for b in (prox, inter, dist))),
+            'extended': bool(getattr(digit, 'is_extended', True)),
+        })
+    center = _xyz(hand.palm.position)
+    return {
+        'side': side,
+        'center': center,
+        'normal': _xyz(hand.palm.normal),
+        'direction': _xyz(hand.palm.direction),
+        'velocity': _xyz(hand.palm.velocity),
+        'wrist': _xyz(hand.arm.next_joint),
+        'confidence': float(hand.confidence),
+        'pinch': float(hand.pinch_strength),
+        'grab': float(hand.grab_strength),
+        'fingers': fingers,
+    }
+
+
+def frame_raw(f: dict) -> np.ndarray:
+    """(63,) raw vector in loader order: palm center, then tip/dip/pip/mcp per finger."""
+    parts = [f['center']] + [fg[k] for fg in f['fingers'] for k in JOINT_KEYS]
+    return np.concatenate(parts).astype(np.float32)
+
+
+def frame_ok(f: dict, min_conf: float) -> bool:
+    if len(f['fingers']) != len(FINGERS) or f['confidence'] < min_conf:
+        return False
+    raw = frame_raw(f)
+    return raw.size == FEATURE_DIM and bool(np.isfinite(raw).all())
+
+
+# XML writer
+def _vec(tag: str, v, pad: str) -> str:
+    x, y, z = (float(c) for c in v)
+    return (f'{pad}<{tag} type_id="opencv-matrix">\n'
+            f'{pad}  <rows>1</rows>\n{pad}  <cols>3</cols>\n{pad}  <dt>f</dt>\n'
+            f'{pad}  <data>\n{pad}    {x:.8e} {y:.8e} {z:.8e}</data></{tag}>\n')
+
+
+def _finger_xml(name: str, idx: int, fg: dict, pad: str) -> str:
+    p = pad + '  '
+    s = (f'{pad}<{name}>\n{p}<Type>{idx}</Type>\n'
+         f'{p}<isExtended>{int(fg["extended"])}</isExtended>\n')
+    s += _vec('TipPosition', fg['tip'], p)
+    s += _vec('TipDirection', fg['tip_dir'], p)
+    s += _vec('TipVelocity', np.zeros(3), p)                  # not available -> 0
+    s += f'{p}<TipLength>{fg["tip_len"]:.16e}</TipLength>\n'
+    s += _vec('dipPosition', fg['dip'], p)
+    s += _vec('pipPosition', fg['pip'], p)
+    s += _vec('mcpPosition', fg['mcp'], p)
+    return s.rstrip('\n') + f'</{name}>\n'
+
+
+def _hand_xml(f: dict) -> str:
+    tag = 'Right' if f['side'] == 'right' else 'Left'
+    p = ' ' * 10
+    s = f'        <{tag}>\n'
+    s += _vec('Center', f['center'], p)
+    s += _vec('Normal', f['normal'], p)
+    s += _vec('Direction', f['direction'], p)
+    s += _vec('Velocity', f['velocity'], p)
+    s += _vec('SphereCenter', f['center'], p)                 # placeholder (not in the Leap API)
+    s += _vec('WristPosition', f['wrist'], p)
+    s += (f'{p}<Confidence>{f["confidence"]:.16e}</Confidence>\n'
+          f'{p}<PinchStrength>{f["pinch"]:.16e}</PinchStrength>\n'
+          f'{p}<GrabStrength>{f["grab"]:.16e}</GrabStrength>\n'
+          f'{p}<SphereRadius>0.</SphereRadius>\n'              # placeholder
+          f'{p}<Fingers>\n{p}  <nFingers>5</nFingers>\n')
+    for i, (name, fg) in enumerate(zip(FINGERS, f['fingers'])):
+        s += _finger_xml(name, i, fg, p + '  ')
+    return s.rstrip('\n') + f'</Fingers></{tag}>'
+
+
+def _image_xml(tag: str, f: dict) -> str:
+    # Bounding-box fields are camera-image coordinates; not available here -> 0.
+    return (f'    <{tag}>\n      <Hands>\n        <nHands>1</nHands>\n'
+            f'{_hand_xml(f)}</Hands>\n'
+            '      <x_min>0</x_min>\n      <x_max>0</x_max>\n'
+            '      <y_min>0</y_min>\n      <y_max>0</y_max>\n'
+            '      <x_palm>0</x_palm>\n'
+            f'      <y_palm>0</y_palm></{tag}>\n')
+
+
+def frame_xml(frame_id: int, f: dict) -> str:
+    # "RigthImage" (sic) matches the original files; the hand is stored under both images.
+    return ('<?xml version="1.0"?>\n<opencv_storage>\n<Frame>\n'
+            f'  <ID>{frame_id}</ID>\n  <Images>\n    <nImages>2</nImages>\n'
+            + _image_xml('RigthImage', f)
+            + _image_xml('LeftImage', f).rstrip('\n')
+            + '</Images></Frame>\n</opencv_storage>\n')
+
+
+def write_frame(folder: str, frame_id: int, f: dict) -> str:
+    path = os.path.join(folder, f'frame_{frame_id}.xml')
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as fh:
+        fh.write(frame_xml(frame_id, f))
+    os.replace(tmp, path)                                    # never leave a half-written file
+    return path
+
+
+def pose_folder(root: str, subject: str, split_folder: str, pose: str) -> str:
+    return os.path.join(root, 'skeletal', subject, split_folder, pose)
+
+
+def next_frame_id(folder: str) -> int:
+    ids = [int(m.group(1)) for n in os.listdir(folder)
+           if (m := re.fullmatch(r'frame_(\d+)\.xml', n))]
+    return max(ids, default=0) + 1
+
+
+# Recording
+def record(args) -> None:
+    import leap
+
+    want = args.hand
+
+    class Latest(leap.Listener):
+        def __init__(self):
+            super().__init__()
+            self._lock = threading.Lock()
+            self._item = None                                # (monotonic ts, frame id, frame dict)
+
+        def on_connection_event(self, event):
+            print("Connected to tracking service")
+
+        def on_tracking_event(self, event):
+            item = None
+            for h in event.hands:
+                is_right = h.type == leap.HandType.Right
+                if want == 'any' or (want == 'right') == is_right:
+                    fid = getattr(event, 'tracking_frame_id', time.monotonic_ns())
+                    item = (time.monotonic(), fid, extract_frame(h, 'right' if is_right else 'left'))
+                    break
+            with self._lock:
+                self._item = item
+
+        def get(self):
+            with self._lock:
+                it = self._item
+            if it is None or time.monotonic() - it[0] > STALE_S:
+                return None
+            return it[1], it[2]
+
+    listener = Latest()
+    connection = leap.Connection()
+    connection.add_listener(listener)
+
+
+
+    with connection.open():
+        connection.set_tracking_mode(leap.TrackingMode.Desktop)
+        try:
+            for pose in args.pose:
+                saved, skipped = record_pose(listener, args, pose)
+                print(f"\n  [{pose}] saved {saved} frames, skipped {skipped} low-quality")
+        except KeyboardInterrupt:
+            print("\nStopped.")
+
+
+def record_pose(listener, args, pose: str):
+    folder = pose_folder(args.root, args.subject, args.split_folder, pose)
+    os.makedirs(folder, exist_ok=True)
+    frame_id = next_frame_id(folder)
+    input(f"\n[{pose}] get your hand into the pose, then press Enter to start...")
+    for i in range(args.countdown, 0, -1):
+        print(f"  {i}...", flush=True)
+        time.sleep(1)
+    print("  Recording: slowly move/rotate/reposition the hand while holding the pose.")
+
+    interval, saved, skipped = 1.0 / args.fps, 0, 0
+    t0, last_save, last_fid = time.monotonic(), 0.0, None
+    while True:
+        now = time.monotonic()
+        left = args.seconds - (now - t0)
+        if left <= 0 or saved >= args.max_frames:
+            return saved, skipped
+        item = listener.get()
+        status = "no hand"
+        if item is not None:
+            fid, f = item
+            status = f"conf {f['confidence']:.2f}"
+            if fid != last_fid and now - last_save >= interval:
+                last_fid = fid
+                if frame_ok(f, args.min_conf):
+                    write_frame(folder, frame_id, f)
+                    frame_id += 1
+                    saved += 1
+                    last_save = now
+                else:
+                    skipped += 1
+        print(f"\r  saved {saved:5d} | skipped {skipped:4d} | {left:4.0f}s left | {status:<14}",
+              end="", flush=True)
+        time.sleep(0.005)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Record Leap frames in the training-set XML format.")
+    ap.add_argument('--subject', help="subject id; use a NEW id per new person")
+    ap.add_argument('--pose', nargs='+', help="one or more pose labels (folder names)")
+    ap.add_argument('--root', default='./', help="dataset root the loader scans (default ./)")
+    ap.add_argument('--split-folder', default='train_pose', help="must contain 'train'")
+    ap.add_argument('--seconds', type=float, default=60.0, help="max recording time per pose")
+    ap.add_argument('--max-frames', type=int, default=2000, help="max frames per pose per run")
+    ap.add_argument('--fps', type=float, default=15.0, help="max saved frames per second")
+    ap.add_argument('--min-conf', type=float, default=0.5, help="drop frames below this confidence")
+    ap.add_argument('--hand', choices=['right', 'left', 'any'], default='right')
+    ap.add_argument('--countdown', type=int, default=3)
+    args = ap.parse_args()
+
+    if not args.subject or not args.pose:
+        ap.error("--subject and --pose are required")
+    if 'train' not in args.split_folder.lower():
+        ap.error("--split-folder must contain 'train' or the loader will skip it")
+    record(args)
+
+
+if __name__ == "__main__":
+    main()
