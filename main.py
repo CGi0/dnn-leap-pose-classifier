@@ -7,6 +7,8 @@ from LeapPoseDNN import LeapPoseDNN
 from LeapDatasetFeatures import FEATURE_DIM, PREPROCESS_VERSION
 from LeapPoseTuner import tune, best_config
 
+from sklearn.metrics import ConfusionMatrixDisplay
+
 SEED = 42
 MODEL_PATH = "LeapPoseDNN.keras"
 CONFIG_PATH = "LeapPoseConfig.json"
@@ -67,7 +69,7 @@ def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False, reuse_
     # --- Final training, then a single look at the test set ---------------
     dnn = LeapPoseDNN(num_classes=num_classes, **model_kwargs)
     hist = dnn.train(X_tr, y_tr, X_val=X_val, y_val=y_val, epochs=100, **train_kwargs)
-    dnn.evaluate(X_test, y_test, class_names=class_names, print_report=True)
+    results = dnn.evaluate(X_test, y_test, class_names=class_names, print_report=True)
 
     if run_loso:
         print("\nLeave-one-subject-out evaluation:")
@@ -91,7 +93,7 @@ def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False, reuse_
 
     # --- Plot: train vs val on shared axes --------------------------------
     h = hist.history
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     ax1.plot(h["loss"], label="Training loss")
     ax1.plot(h["val_loss"], label="Validation loss")
     ax1.set(xlabel="Epoch", ylabel="Loss", title="Loss")
@@ -101,6 +103,17 @@ def main(run_tuning: bool = True, stage: int = 2, run_loso: bool = False, reuse_
     for ax in (ax1, ax2):
         ax.grid(True)
         ax.legend()
+    fig1.tight_layout()
+        
+    cm = results["confusion_matrix"]
+    fig2, ax3 = plt.subplots(figsize=(10, 9))
+    ConfusionMatrixDisplay(
+        confusion_matrix=cm / cm.sum(axis=1, keepdims=True),
+        display_labels=class_names,
+    ).plot(ax=ax3, cmap="Blues", xticks_rotation=45, values_format=".2f")
+    ax3.set_title("Confusion matrix (row-normalized = recall)")
+    fig2.tight_layout()
+    
     plt.show()
 
 
