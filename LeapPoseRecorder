@@ -1,6 +1,6 @@
 """
 Usage (device connected):
-    python LeapPoseRecorder.py --subject S21 --pose 19_thumbs_up --seconds 60
+    python LeapPoseRecorder.py --subject 26 --pose 19_thumbs_up --seconds 60
 """
 import argparse
 import os
